@@ -141,11 +141,11 @@ internal sealed unsafe class CatLobby : IDisposable
         deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
     }
 
-    void Fail(string what)
+    void Fail(string what, bool soon = false)
     {
         log($"Snowcat lobby: {what}; trying again soon");
         step = Step.Idle;
-        nextTry = DateTime.UtcNow + TimeSpan.FromSeconds(15);
+        nextTry = DateTime.UtcNow + TimeSpan.FromSeconds(soon ? 3 : 15);
     }
 
     /// <summary>Every frame: finds or makes the lobby, keeps the member list fresh, and merges into a fuller lobby if two got made.</summary>
@@ -162,6 +162,15 @@ internal sealed unsafe class CatLobby : IDisposable
             case Step.Searching:
                 if (!Done(call, out var searched)) { if (now > deadline) Fail("no answer from Steam"); return; }
                 var found = searched ? Found() : new();
+                // A lobby we made or joined whose answer Steam didn't hand back: we're in it all the same.
+                var mine = found.Where(f => InLobby(f.Id)).Select(f => f.Id).ToList();
+                if (lobby == 0 && mine.Count > 0)
+                {
+                    Entered(mine[0], made: false);
+                    foreach (var stray in mine.Skip(1)) leaveLobby(mm, stray);
+                    return;
+                }
+                foreach (var stray in mine.Where(id => id != lobby)) leaveLobby(mm, stray);
                 if (lobby != 0)
                 {
                     // Merging: only into a fuller lobby than ours (ours is in the list too).
@@ -208,10 +217,11 @@ internal sealed unsafe class CatLobby : IDisposable
                         Entered(l, made: true);
                         return;
                     }
-                    if (now > deadline || !made) Fail("couldn't make one");
+                    // Made, maybe, without Steam saying so: look again soon (a search finds a lobby we're in).
+                    if (now > deadline || !made) Fail($"couldn't read the new lobby (result {*(int*)buf})", soon: true);
                     return;
                 }
-                if (now > deadline) Fail("no answer from Steam");
+                if (now > deadline) Fail("no answer from Steam", soon: true);
                 return;
             case Step.In:
                 if (now >= nextMembers)

@@ -91,7 +91,9 @@ public sealed unsafe class SnowcatMod : JibbersMod
     CatLobby? lobby;
     readonly HashSet<ulong> accepted = new();
     List<Vector3> shells = new();
-    DateTime nextShells, nextPresence;
+    DateTime nextShells, nextPresence, nextHello;
+    /// <summary>Lobby players who've said hello: their map, where their rider is, and when they said it.</summary>
+    readonly Dictionary<ulong, (int Map, Vector3 At, DateTime When)> hellos = new();
     Vector3 myBody;
     /// <summary>Your runs of work (blade or tiller down, until both are up): each can be undone.</summary>
     int myRun, runCounter = Environment.TickCount & 0xFFFFFF;
@@ -532,14 +534,26 @@ public sealed unsafe class SnowcatMod : JibbersMod
         var partyPeers = PartyPeers();
         var serverOnly = link is null ? new List<ulong>() : link.Players.Where(id => !partyPeers.Contains(id)).ToList();
         var lobbyOnly = link is null || lobby is null ? new List<ulong>() : lobby.Members.Where(id => !partyPeers.Contains(id) && !link.Players.Contains(id)).ToList();
-        var here = lobbyOnly.Where(id => remotes.TryGetValue(id, out var rm) && rm.Near).ToList();
+        var map = Map();
+        // On our server: their hello says the same map, with their rider where a rider in our game is
+        // (or their snowcat is already showing here).
+        bool Here(ulong id) =>
+            (hellos.TryGetValue(id, out var h) && now - h.When < TimeSpan.FromSeconds(8) && h.Map == map && shells.Any(at => Vec.Distance(at, h.At) < 8))
+            || (remotes.TryGetValue(id, out var rm) && rm.Near);
+        var here = lobbyOnly.Where(Here).ToList();
+        if (map is { } hm && now >= nextHello)
+        {
+            nextHello = now + TimeSpan.FromSeconds(2);
+            var hello = HelloPacket.Encode(hm, myBody);
+            Send(hello, reliable: false);
+            foreach (var id in lobbyOnly) link!.Send(id, hello, reliable: false);
+        }
         var count = partyPeers.Count + serverOnly.Count + here.Count;
         if (count * 1000 + lobbyOnly.Count != saidPlayers)
         {
             saidPlayers = count * 1000 + lobbyOnly.Count;
             Log($"sharing your snowcat with {partyPeers.Count} in your party, {serverOnly.Count + here.Count} more on your server ({lobbyOnly.Count} Snowcat players online in all)");
         }
-        var map = Map();
         if (map is { } m && cat is { } c && now >= nextSend)
         {
             nextSend = now + TimeSpan.FromSeconds(0.05);
@@ -571,6 +585,11 @@ public sealed unsafe class SnowcatMod : JibbersMod
                 if (u.Map == map && snow is not null && snow.UndoRun(from.ToString(), u.Run) is var n && n > 0) Log($"another player undid a snowcat run ({n} patches put back)");
                 continue;
             }
+            if (HelloPacket.Decode(data) is { } hi)
+            {
+                hellos[from] = (hi.Map, hi.At, now);
+                continue;
+            }
             if (BladePacket.Decode(data) is { } bp)
             {
                 if (remotes.TryGetValue(from, out var rb)) (rb.AngleTo, rb.TiltTo) = (bp.Angle, bp.Tilt);
@@ -593,7 +612,8 @@ public sealed unsafe class SnowcatMod : JibbersMod
                 continue;
             }
             // Lobby players on another server of the same map: their driver isn't in your game. Not drawn.
-            var near = r.Trusted || shells.Any(at => Vec.Distance(at, r.Last.Driver) < 12);
+            var near = r.Trusted || shells.Any(at => Vec.Distance(at, r.Last.Driver) < 12)
+                || (hellos.TryGetValue(id, out var hh) && now - hh.When < TimeSpan.FromSeconds(8) && shells.Any(at => Vec.Distance(at, hh.At) < 8));
             if (near != r.Near)
             {
                 r.Near = near;
@@ -777,6 +797,7 @@ public sealed unsafe class SnowcatMod : JibbersMod
     void MapChanged()
     {
         mapId = null;
+        hellos.Clear();
         followCam?.Dispose();
         followCam = null;
         cameraWas = null;

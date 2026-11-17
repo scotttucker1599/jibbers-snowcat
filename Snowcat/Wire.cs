@@ -104,6 +104,35 @@ internal static class BladePacket
     }
 }
 
+/// <summary>
+/// "I have Snowcat, I'm on this map, my rider is here": sent every couple of seconds to every Snowcat
+/// player, with or without a snowcat out. It opens the Steam connection both ways (Steam drops a
+/// message from someone you've never written to) and tells each side who's on the same server. No game calls.
+/// </summary>
+internal static class HelloPacket
+{
+    const uint Magic = 0x48454C31; // "HEL1"
+    public const int Size = 20;
+
+    public static byte[] Encode(int map, Vector3 at)
+    {
+        var b = new byte[Size];
+        BinaryPrimitives.WriteUInt32LittleEndian(b, Magic);
+        BinaryPrimitives.WriteInt32LittleEndian(b.AsSpan(4), map);
+        BinaryPrimitives.WriteSingleLittleEndian(b.AsSpan(8), at.X);
+        BinaryPrimitives.WriteSingleLittleEndian(b.AsSpan(12), at.Y);
+        BinaryPrimitives.WriteSingleLittleEndian(b.AsSpan(16), at.Z);
+        return b;
+    }
+
+    public static (int Map, Vector3 At)? Decode(ReadOnlySpan<byte> s)
+    {
+        if (s.Length != Size || BinaryPrimitives.ReadUInt32LittleEndian(s) != Magic) return null;
+        var at = new Vector3(BinaryPrimitives.ReadSingleLittleEndian(s[8..]), BinaryPrimitives.ReadSingleLittleEndian(s[12..]), BinaryPrimitives.ReadSingleLittleEndian(s[16..]));
+        return float.IsFinite(at.X) && float.IsFinite(at.Y) && float.IsFinite(at.Z) ? (BinaryPrimitives.ReadInt32LittleEndian(s[4..]), at) : null;
+    }
+}
+
 /// <summary>"Undo my run": take back the pushing and grooming one player's snowcat did in one run. No game calls.</summary>
 internal static class UndoPacket
 {

@@ -45,6 +45,15 @@ static class WireTests
     }
 
     [Test]
+    static void AHelloSaysWhichMapAndWhere()
+    {
+        var back = HelloPacket.Decode(HelloPacket.Encode(-42, new Vector3(1.5f, -2, 300)));
+        Assert.True(back is { Map: -42 } h && h.At.X == 1.5f && h.At.Y == -2 && h.At.Z == 300, $"{back}");
+        Assert.True(HelloPacket.Decode(UndoPacket.Encode(1, 2)) is null && CatPacket.Decode(HelloPacket.Encode(1, default)) is null);
+        Assert.True(BladePacket.Decode(HelloPacket.Encode(1, default)) is null && UndoPacket.Decode(HelloPacket.Encode(1, default)) is null);
+    }
+
+    [Test]
     static void BetweenUpdatesItTurnsTheShortWayRound()
     {
         var a = new CatPacket(1, new Vector3(0, 0, 0), 350, 0, 0, 0, 0, 0, 0, false, false);
